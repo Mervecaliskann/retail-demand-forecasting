@@ -82,7 +82,9 @@ def add_exogenous(df: pd.DataFrame) -> pd.DataFrame:
     # Public-sector paydays: the 15th and the last day of the month
     # Kamu maaş günleri: ayın 15'i ve ayın son günü
     out["is_payday"] = ((d.day == 15) | d.is_month_end).astype("int8")
-    out["days_since_payday"] = np.where(d.day >= 15, d.day - 15, d.day)
+    # Days since the last payday: 0 on the 15th and on the last day of the month
+    # Son maaş gününden bu yana geçen gün: ayın 15'inde ve son gününde 0
+    out["days_since_payday"] = np.where(d.is_month_end, 0, np.where(d.day >= 15, d.day - 15, d.day))
 
     # Holidays / Tatiller
     hol = holiday_table(data.load_holidays(), data.load_stores())
@@ -97,8 +99,12 @@ def add_exogenous(df: pd.DataFrame) -> pd.DataFrame:
 
     # Oil: 28-day mean, shifted by OIL_LAG days (only past prices)
     # Petrol: 28 günlük ortalama, OIL_LAG gün kaydırılmış (sadece geçmiş fiyatlar)
-    oil = data.load_oil().set_index("date")["dcoilwtico"]
-    oil_ma = oil.rolling(28, min_periods=1).mean().shift(OIL_LAG).rename("oil_ma28")
+    # Full daily calendar + forward-fill first, so weekends/holidays are not NaN
+    # Önce tam günlük takvim + ileri doldurma, hafta sonu/tatil günleri NaN olmasın
+    oil = data.load_oil().set_index("date")["dcoilwtico"].asfreq("D").ffill()
+    # Shift by 16 calendar days (freq="D"), not by 16 rows
+    # 16 satır değil, 16 takvim günü kaydır (freq="D")
+    oil_ma = oil.rolling(28, min_periods=1).mean().shift(OIL_LAG, freq="D").rename("oil_ma28")
     out = out.merge(oil_ma.reset_index(), on="date", how="left")
 
     for c in CAT_FEATURES:
