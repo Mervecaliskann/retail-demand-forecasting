@@ -121,7 +121,10 @@ def add_lag_features(df: pd.DataFrame) -> pd.DataFrame:
     shifted = g.shift(1)
     g1 = shifted.groupby([df["store_nbr"], df["family"]], observed=True)
     for w in ROLL_WINDOWS:
-        df[f"rmean_{w}"] = g1.transform(lambda s: s.rolling(w, min_periods=w).mean())
+        # Built-in grouped rolling is much faster than transform(lambda)
+        # Yerleşik gruplu rolling, transform(lambda)'dan çok daha hızlı
+        r = g1.rolling(w, min_periods=w).mean()
+        df[f"rmean_{w}"] = r.reset_index(level=[0, 1], drop=True).reindex(df.index)
     # Mean of the same weekday over the last 4 weeks
     # Son 4 haftada aynı haftanın gününün ortalaması
     df["dow_mean_4w"] = sum(g.shift(k) for k in [7, 14, 21, 28]) / 4
