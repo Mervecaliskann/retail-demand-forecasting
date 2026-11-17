@@ -7,8 +7,8 @@ import shap
 
 from src.features import FEATURES
 
-# Feature groups for a simple, business-level summary
-# Basit, iş diline uygun özet için özellik grupları
+# Feature groups for a short summary
+# Kısa özet için özellik grupları
 GROUPS = {
     "sales history": ["lag_7", "lag_14", "lag_28", "rmean_7", "rmean_28", "dow_mean_4w"],
     "calendar": ["dayofweek", "day", "month", "dayofyear"],
@@ -21,17 +21,12 @@ GROUPS = {
 
 
 def shap_values(booster, X: pd.DataFrame) -> shap.Explanation:
-    """Exact TreeSHAP from LightGBM itself (handles categorical features correctly).
-    LightGBM'in kendi kesin TreeSHAP hesabı (kategorik özellikleri doğru işler).
-
-    Values are in log1p(sales) space: +0.1 means about +10% sales.
-    Değerler log1p(satış) ölçeğinde: +0.1 yaklaşık +%10 satış demek.
+    """LightGBM's exact TreeSHAP, in log1p(sales) space (+0.1 is about +10% sales).
+    LightGBM'in kesin TreeSHAP hesabı, log1p(satış) ölçeğinde (+0.1 yaklaşık +%10 satış).
     """
     contrib = booster.predict(X[FEATURES], pred_contrib=True)
-    # Plots need numbers: numeric categories (store_nbr, cluster) keep their value,
-    # text categories (family, store_type) become integer codes
-    # Grafikler sayı ister: sayısal kategoriler (store_nbr, cluster) değerini korur,
-    # metin kategoriler (family, store_type) tamsayı koduna çevrilir
+    # Plots need numbers: numeric categories keep their value, text categories become codes
+    # Grafikler sayı ister: sayısal kategoriler değerini korur, metin kategoriler koda çevrilir
     def to_num(c):
         if c.dtype.name != "category":
             return c

@@ -12,8 +12,8 @@ KEYS = ["store_nbr", "family"]
 # 16.04.2016 depremi: satışlar yaklaşık bir ay anormaldi (yardım alımları)
 QUAKE_START, QUAKE_END = pd.Timestamp("2016-04-16"), pd.Timestamp("2016-05-16")
 
-# Oil prices for future days are unknown at forecast time: only use values >= 16 days old
-# Gelecek günlerin petrol fiyatı tahmin anında bilinmez: sadece en az 16 gün eski değerler
+# Future oil prices are unknown at forecast time: use values at least 16 days old
+# Gelecekteki petrol fiyatı tahmin anında bilinmez: en az 16 gün eski değerleri kullan
 OIL_LAG = 16
 
 LAGS = [7, 14, 28]
@@ -32,19 +32,11 @@ FEATURES = (
 
 
 def holiday_table(holidays: pd.DataFrame, stores: pd.DataFrame) -> pd.DataFrame:
-    """One row per (date, store_nbr) with holiday flags.
-    Her (tarih, mağaza) için bir satır, tatil bayraklarıyla.
-
-    Rules / Kurallar:
-    - transferred=True: the official date is a normal day, so drop it.
-      transferred=True: resmi tarih normal bir gün, o yüzden at.
-    - Transfer: the day the holiday is really celebrated, so count it as a holiday.
-      Transfer: tatilin gerçekten kutlandığı gün, tatil say.
-    - Bridge: extra day off. Work Day: weekend day that becomes a working day.
-      Bridge: ek izin günü. Work Day: iş gününe dönen hafta sonu günü.
-    - Earthquake events are not used here (handled by excluding those weeks).
-      Deprem olayları burada kullanılmıyor (o haftalar eğitimden çıkarılıyor).
+    """Holiday flags per (date, store_nbr); a moved holiday counts on its Transfer date.
+    (tarih, mağaza) başına tatil bayrakları; taşınan tatil Transfer tarihinde sayılır.
     """
+    # Drop official dates of moved holidays and earthquake events (those weeks are excluded)
+    # Taşınan tatillerin resmi tarihini ve deprem olaylarını at (o haftalar zaten çıkarılıyor)
     h = holidays[~holidays["transferred"]].copy()
     h = h[~h["description"].str.contains("Terremoto")]
 
@@ -55,6 +47,8 @@ def holiday_table(holidays: pd.DataFrame, stores: pd.DataFrame) -> pd.DataFrame:
     reg = h[h["locale"] == "Regional"].merge(s, left_on="locale_name", right_on="state")
     loc = h[h["locale"] == "Local"].merge(s, left_on="locale_name", right_on="city")
     allh = pd.concat([nat, reg, loc], ignore_index=True)
+    # Days off; Bridge (extra day off) and Work Day (weekend turned workday) get own flags
+    # İzin günleri; Bridge (ek izin) ve Work Day (iş gününe dönen hafta sonu) ayrı bayrak
     off = allh["type"].isin(["Holiday", "Transfer", "Additional"])
 
     allh["hol_national"] = (off & (allh["locale"] == "National")).astype("int8")
@@ -68,6 +62,18 @@ def holiday_table(holidays: pd.DataFrame, stores: pd.DataFrame) -> pd.DataFrame:
     return allh.groupby(["date", "store_nbr"], as_index=False)[flags].max()
 
 
+def payday_features(dates: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Paydays are the 15th and the last day of the month; returns (is_payday, days_since_payday).
+    Maaş günleri ayın 15'i ve son günü; (is_payday, days_since_payday) döndürür.
+    """
+    d = dates.dt
+    is_payday = ((d.day == 15) | d.is_month_end).astype("int8")
+    # Day 1-14: days since last month's end; day 15+: days since the 15th; month end: 0
+    # 1-14. gün: geçen ay sonundan beri; 15. gün ve sonrası: 15'ten beri; ay sonu: 0
+    since = np.where(d.is_month_end, 0, np.where(d.day >= 15, d.day - 15, d.day))
+    return is_payday, pd.Series(since, index=dates.index, dtype="int16")
+
+
 def add_exogenous(df: pd.DataFrame) -> pd.DataFrame:
     """Features that do not depend on sales: calendar, stores, holidays, promo, oil.
     Satıştan bağımsız özellikler: takvim, mağaza, tatil, promosyon, petrol.
@@ -79,12 +85,7 @@ def add_exogenous(df: pd.DataFrame) -> pd.DataFrame:
     d = out["date"].dt
     out["dayofweek"], out["day"], out["month"], out["dayofyear"] = d.dayofweek, d.day, d.month, d.dayofyear
 
-    # Public-sector paydays: the 15th and the last day of the month
-    # Kamu maaş günleri: ayın 15'i ve ayın son günü
-    out["is_payday"] = ((d.day == 15) | d.is_month_end).astype("int8")
-    # Days since the last payday: 0 on the 15th and on the last day of the month
-    # Son maaş gününden bu yana geçen gün: ayın 15'inde ve son gününde 0
-    out["days_since_payday"] = np.where(d.is_month_end, 0, np.where(d.day >= 15, d.day - 15, d.day))
+    out["is_payday"], out["days_since_payday"] = payday_features(out["date"])
 
     # Holidays / Tatiller
     hol = holiday_table(data.load_holidays(), data.load_stores())
@@ -97,13 +98,9 @@ def add_exogenous(df: pd.DataFrame) -> pd.DataFrame:
     out["promo_share_family"] = out.groupby(["date", "family"], observed=True)["onpromotion"].transform(
         lambda x: (x > 0).mean())
 
-    # Oil: 28-day mean, shifted by OIL_LAG days (only past prices)
-    # Petrol: 28 günlük ortalama, OIL_LAG gün kaydırılmış (sadece geçmiş fiyatlar)
-    # Full daily calendar + forward-fill first, so weekends/holidays are not NaN
-    # Önce tam günlük takvim + ileri doldurma, hafta sonu/tatil günleri NaN olmasın
+    # Oil: daily calendar + forward-fill, 28-day mean, shifted 16 calendar days (not rows)
+    # Petrol: günlük takvim + ileri doldurma, 28 günlük ortalama, 16 takvim günü kaydırma (satır değil)
     oil = data.load_oil().set_index("date")["dcoilwtico"].asfreq("D").ffill()
-    # Shift by 16 calendar days (freq="D"), not by 16 rows
-    # 16 satır değil, 16 takvim günü kaydır (freq="D")
     oil_ma = oil.rolling(28, min_periods=1).mean().shift(OIL_LAG, freq="D").rename("oil_ma28")
     out = out.merge(oil_ma.reset_index(), on="date", how="left")
 
@@ -114,11 +111,8 @@ def add_exogenous(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_lag_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Lags and rolling means of log1p(sales). Assumes rows sorted by series and date.
-    log1p(satış) üzerinde lag ve rolling ortalamalar. Satırlar seri ve tarihe göre sıralı olmalı.
-
-    All windows end at least 1 day before the target day (no leakage).
-    Tüm pencereler hedef günden en az 1 gün önce biter (sızıntı yok).
+    """Lags and rolling means of log1p(sales); windows end before the target day.
+    log1p(satış) lag ve rolling ortalamaları; pencereler hedef günden önce biter.
     """
     y = np.log1p(df["sales"])
     g = y.groupby([df["store_nbr"], df["family"]], observed=True)

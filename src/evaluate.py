@@ -1,5 +1,5 @@
 """Backtest folds and error metrics.
-Backtest katmanları (fold) ve hata metrikleri.
+Backtest fold'ları ve hata metrikleri.
 """
 import numpy as np
 import pandas as pd
@@ -12,11 +12,8 @@ LAST_DATE = pd.Timestamp("2017-08-15")
 
 
 def make_folds(last_date=LAST_DATE, horizon=HORIZON, n_folds=N_FOLDS):
-    """Non-overlapping 16-day test windows, the latest one ends on `last_date`.
-    Örtüşmeyen 16 günlük test pencereleri, en sonuncusu `last_date` tarihinde biter.
-
-    cutoff = last day the forecaster is allowed to see.
-    cutoff = tahmin yapanın görebileceği son gün.
+    """Non-overlapping 16-day test windows ending on `last_date`; cutoff = last visible day.
+    `last_date` tarihinde biten örtüşmeyen 16 günlük pencereler; cutoff = görülebilen son gün.
     """
     folds = []
     for k in range(n_folds, 0, -1):
@@ -29,8 +26,8 @@ def make_folds(last_date=LAST_DATE, horizon=HORIZON, n_folds=N_FOLDS):
 
 
 def metrics(y_true, y_pred) -> dict:
-    # WAPE = total absolute error / total sales; robust to many small series
-    # WAPE = toplam mutlak hata / toplam satış; çok sayıda küçük seride de sağlam
+    # WAPE = total absolute error / total sales
+    # WAPE = toplam mutlak hata / toplam satış
     y_true, y_pred = np.asarray(y_true, float), np.asarray(y_pred, float)
     err = y_pred - y_true
     return {"MAE": np.mean(np.abs(err)),

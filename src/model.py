@@ -1,5 +1,5 @@
 """LightGBM training and recursive 16-day forecasting.
-LightGBM eğitimi ve recursive (adım adım) 16 günlük tahmin.
+LightGBM eğitimi ve recursive 16 günlük tahmin.
 """
 import lightgbm as lgb
 import numpy as np
@@ -7,8 +7,8 @@ import pandas as pd
 
 from src.features import FEATURES, CAT_FEATURES, KEYS, add_lag_features
 
-# Fixed, modest settings: no tuning on the test folds
-# Sabit, ölçülü ayarlar: test fold'ları üzerinde ayar yapılmadı
+# Fixed settings, not tuned on the test folds
+# Sabit ayarlar, test fold'larında ayarlanmadı
 PARAMS = {
     "objective": "regression",   # L2 on log1p(sales) / log1p(satış) üzerinde L2
     "learning_rate": 0.05,
@@ -30,10 +30,8 @@ HISTORY_DAYS = 60
 
 
 def training_rows(feat: pd.DataFrame, cutoff) -> pd.DataFrame:
-    """Rows usable for training: up to the cutoff, all lags present,
-    not a closed day, not in the earthquake weeks.
-    Eğitimde kullanılabilecek satırlar: cutoff'a kadar, tüm lag'ler dolu,
-    kapalı gün değil, deprem haftalarında değil.
+    """Training rows: up to the cutoff, lags present, not closed, not in the earthquake weeks.
+    Eğitim satırları: cutoff'a kadar, lag'ler dolu, kapalı gün ve deprem haftası değil.
     """
     m = (feat["date"] <= cutoff) & feat["rmean_28"].notna()
     m &= (feat["is_closed"] == 0) & (feat["quake_period"] == 0)
@@ -48,11 +46,8 @@ def train(feat: pd.DataFrame, cutoff) -> lgb.Booster:
 
 
 def forecast_recursive(model: lgb.Booster, feat: pd.DataFrame, cutoff, horizon: int) -> pd.DataFrame:
-    """Predict day 1, write it back as 'sales', rebuild lags, predict day 2, ...
-    1. günü tahmin et, 'sales' olarak geri yaz, lag'leri yeniden kur, 2. günü tahmin et, ...
-
-    Exogenous columns (calendar, promo, holidays) for future days are known in advance.
-    Gelecek günlerin dış değişkenleri (takvim, promosyon, tatil) önceden bilinir.
+    """Predict day 1, write it back as sales, rebuild lags, predict day 2, and so on.
+    1. günü tahmin et, satış olarak geri yaz, lag'leri yeniden kur, 2. günü tahmin et, devam et.
     """
     start = cutoff - pd.Timedelta(days=HISTORY_DAYS)
     end = cutoff + pd.Timedelta(days=horizon)

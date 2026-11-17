@@ -18,11 +18,8 @@ def naive(df: pd.DataFrame, cutoff, horizon: int) -> pd.DataFrame:
 
 
 def seasonal_naive(df: pd.DataFrame, cutoff, horizon: int, season: int = 7) -> pd.DataFrame:
-    """Every future day = sales on the same weekday in the last observed week.
-    Gelecekteki her gün = son gözlenen haftada aynı haftanın günündeki satış.
-
-    For horizon > 7 we reuse that same week again (no peeking into the test period).
-    Ufuk 7'den uzunsa aynı haftayı tekrar kullanırız (test dönemine bakmadan).
+    """Every future day = same weekday in the last observed week (reused if horizon > 7).
+    Gelecekteki her gün = son gözlenen haftada aynı gün (ufuk 7'den uzunsa tekrar kullanılır).
     """
     dates = pd.date_range(cutoff + pd.Timedelta(days=1), periods=horizon)
     h = np.arange(1, horizon + 1)

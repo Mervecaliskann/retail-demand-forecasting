@@ -1,135 +1,118 @@
-# Retail Demand Forecasting & Replenishment
+# Retail Demand Forecasting and Replenishment
 
-🇹🇷 [Türkçe sürüm](README.tr.md)
+[Türkçe sürüm](README.tr.md)
 
-Daily sales forecasting for a grocery chain, plus an inventory simulation that turns the forecasts into orders.
-Built on the Kaggle **Store Sales (Favorita)** data. CPU only, runs in about 7 minutes on a laptop.
+## Goal
 
-## Problem
-
-A retailer has to decide every day how much to order for each store and product group. If the forecast is too low, shelves go empty and sales are lost. If it is too high, money sits in stock. This project asks two questions:
-
-1. Can a LightGBM model forecast 16 days of demand better than simple baselines?
-2. Does the better forecast help in practice? Does it reach the same fill rate with less inventory?
+Forecast daily sales 16 days ahead for a grocery chain and check whether a LightGBM model beats simple baselines. Then test in a simulation whether the better forecast reaches the same fill rate with less inventory.
 
 ## Data
 
-Source: the [Kaggle Store Sales – Time Series Forecasting](https://www.kaggle.com/competitions/store-sales-time-series-forecasting/data) files (`train.csv`, `stores.csv`, `oil.csv`, `holidays_events.csv`, `transactions.csv`). They are not in this repo, so download them into `data/`.
-
-- **Full data:** 3.0M rows, 54 stores × 33 product families, 2013-01-01 → 2017-08-15.
-- **Scope used:** all 54 stores × the 10 largest families, from 2015-07-01.
-  - That is 540 series and 411k rows, covering **93% of sales**.
-  - In-scope zero-sales share is 1%. In the full data it is 31%, mostly from small families such as BOOKS and BABY CARE.
-- **Cleaning:**
-  - Days before a store's first sale are dropped.
-  - Dec 25 (stores closed) is re-added as 0 so lags stay aligned. These days are left out of training.
+- Source: [Kaggle Store Sales: Time Series Forecasting (Favorita)](https://www.kaggle.com/competitions/store-sales-time-series-forecasting/data).
+- The data is not in this repo. Download `train.csv`, `stores.csv`, `oil.csv`, `holidays_events.csv` and `transactions.csv` from the Kaggle page (or run `kaggle competitions download -c store-sales-time-series-forecasting`) and put them in `data/`.
+- Full data: 3,000,888 rows, 54 stores, 33 product families, 2013-01-01 to 2017-08-15.
+- Scope used: all 54 stores and the 10 largest families from 2015-07-01. That is 540 series and 411,250 rows, covering 93% of sales.
+- Days before a store's first sale are dropped. Dec 25 (stores closed) is added back with 0 sales so lags stay aligned, and these days are not used for training.
 
 ## Method
 
-| Step | What |
-|---|---|
-| Baselines | **Naive** (last value) and **seasonal naive** (same weekday of the last week) |
-| Model | One global **LightGBM** on `log1p(sales)`, with fixed parameters (not tuned on the test folds) |
-| Features | Lags 7/14/28; rolling means 7/28; same-weekday mean of the last 4 weeks; calendar; payday (15th and last day of the month); promotions; holidays; oil price; store and family |
-| Holidays | A transferred holiday counts on its *Transfer* date (the original date is a normal day). Bridge and Work Day get their own flags. Regional and local holidays only apply to stores in that state or city. |
-| Earthquake | The weeks after the 2016-04-16 earthquake (until 05-16) are removed from training |
-| No leakage | Oil uses a 28-day mean shifted 16 calendar days. For 16 days ahead, `lag_7` would need future sales, so the forecast is **recursive**: predict day 1, feed it back, predict day 2, and so on. |
-| Backtest | 4 rolling folds × 16-day horizon (2017-06-13 → 08-15), with the model retrained at every cutoff |
-| Explainability | Exact TreeSHAP from LightGBM (`pred_contrib`) |
-| Inventory | Order-up-to policy, daily review, lead time 3 days, lost sales, safety stock = z × forecast-error RMSE |
+- **Baselines:** naive (last known day) and seasonal naive (same weekday of the last known week).
+- **Model:** one global LightGBM on `log1p(sales)` with fixed parameters, not tuned on the test folds.
+- **Features:** lags 7, 14, 28; rolling means 7 and 28; same-weekday mean of the last 4 weeks; calendar; payday; promotions; holidays; oil price; store and family.
+- **Holidays:** a moved holiday counts on its Transfer date. Bridge and Work Day have their own flags. Regional and local holidays only apply to stores in that state or city.
+- **Backtest:** rolling origin, 4 folds of 16 days (2017-06-13 to 2017-08-15). The model is retrained at every cutoff with data up to that day only.
+- **Leakage controls:**
+  - Forecasts are recursive: day 1 is predicted, fed back as history, then day 2 is predicted, and so on. No lag uses future sales.
+  - Oil price is put on a daily calendar, forward-filled, averaged over 28 days and shifted 16 calendar days, because future oil prices are unknown at forecast time.
+  - The weeks after the 2016-04-16 earthquake (until 2016-05-16) are left out of training.
+  - Safety stock in the simulation is calibrated on a period before the simulation.
+- **Explanations:** exact TreeSHAP from LightGBM.
 
 ## Results
 
-### Forecast accuracy (540 series, 16-day horizon)
+WAPE per fold (540 series, 16-day horizon):
 
-| Fold | Test period | Naive WAPE | Seasonal naive WAPE | **LightGBM WAPE** |
-|---|---|---|---|---|
-| 1 | Jun 13 – Jun 28 | 0.225 | 0.162 | **0.112** |
-| 2 | Jun 29 – Jul 14 | 0.298 | 0.156 | **0.096** |
-| 3 | Jul 15 – Jul 30 | 0.259 | 0.132 | **0.115** |
-| 4 | Jul 31 – Aug 15 | 0.438 | 0.197 | **0.133** |
-| **Mean** | | 0.305 | 0.162 | **0.114** |
+| Fold | Test period | Naive | Seasonal naive | LightGBM | LightGBM vs. seasonal naive |
+|---|---|---|---|---|---|
+| 1 | 2017-06-13 to 06-28 | 0.225 | 0.162 | **0.112** | -31.0% |
+| 2 | 2017-06-29 to 07-14 | 0.298 | 0.156 | **0.096** | -38.6% |
+| 3 | 2017-07-15 to 07-30 | 0.259 | 0.132 | **0.115** | -12.9% |
+| 4 | 2017-07-31 to 08-15 | 0.438 | 0.197 | **0.133** | -32.3% |
+| **Mean** | | 0.305 | 0.162 | **0.114** | **-29.5%** |
 
-Mean MAE is 443 / 235 / **165** and mean RMSE is 982 / 556 / **386** (naive / seasonal naive / LightGBM).
-
-LightGBM beats seasonal naive in every fold: **−30% WAPE on average**, ranging from −13% to −39% per fold. The gain is largest for promotion-driven families (CLEANING, PERSONAL CARE, GROCERY I) and smallest for fresh food with a very regular weekly pattern (PRODUCE, DAIRY, BREAD/BAKERY).
-
-### What drives the forecast (SHAP)
-
-- **Sales history explains 83% of mean |SHAP|.** The top features are `lag_7`, `rmean_7` and `dow_mean_4w`. Calendar and promotions are about 5–6% each. Oil price is only **0.6%**.
-- **Rare features matter a lot on the days they are active.**
-  - A national holiday adds about **+10%** to the forecast.
-  - A promotion adds about +5%.
-  - Payday (the `is_payday` and `days_since_payday` features together) adds about +3%. This effect lasts for 2–3 days after payday and turns slightly negative before the next one.
-
-### Inventory simulation (64 days, 540 series)
-
-| Service level | Method | Fill rate | Avg. inventory (days of demand) |
-|---|---|---|---|
-| 90% | Naive | 98.98% | 2.36 |
-| | Seasonal naive | 98.81% | 1.01 |
-| | **LightGBM** | 99.05% | **0.65** |
-| **95%** | Naive | 99.59% | 2.86 |
-| | Seasonal naive | 99.30% | 1.25 |
-| | **LightGBM** | 99.32% | **0.81** |
-| 99% | Naive | 99.89% | 3.86 |
-| | Seasonal naive | 99.68% | 1.71 |
-| | **LightGBM** | 99.58% | **1.11** |
-
-At the same nominal service level, naive reaches a higher fill rate only because its large errors give it 3.5× more safety stock. The fair comparison is the trade-off curve below. To reach a **99.5% fill rate**, the inventory needed is:
-
-| Method | Inventory needed | LightGBM saves |
-|---|---|---|
-| Naive | 2.79 days | 64% |
-| Seasonal naive | 1.43 days | 30% |
-| **LightGBM** | **1.00 day** | — |
-
-Going from a 90% to a 99% service level raises LightGBM inventory by about 70% but adds only about 0.5 points of fill rate.
-
-### Figures
+- Mean MAE: 443 (naive), 235 (seasonal naive), 165 (LightGBM). Mean RMSE: 982, 556, 386.
+- LightGBM beats seasonal naive in every fold. The gain is largest for CLEANING (39%), PERSONAL CARE (39%) and GROCERY I (36%), and smallest for PRODUCE (13%), DAIRY (15%) and BREAD/BAKERY (15%).
+- SHAP: sales history gives 83% of mean |SHAP|, calendar 6%, promotions 5%, payday 1.5%, holidays 0.6% and oil price 0.6%.
+- On days when they are active, a national holiday adds about +10% to the forecast, a promotion about +5% and payday about +3%.
 
 | | |
 |---|---|
-| ![Sales over time](reports/figures/01_sales_over_time.png) | ![Backtest WAPE](reports/figures/04_backtest_wape.png) |
-| ![LightGBM example](reports/figures/03_lightgbm_example.png) | ![SHAP](reports/figures/05_shap_summary.png) |
+| ![Sales over time](reports/figures/01_sales_over_time.png) | ![Baselines example](reports/figures/02_baselines_example.png) |
+| ![LightGBM example](reports/figures/03_lightgbm_example.png) | ![Backtest WAPE](reports/figures/04_backtest_wape.png) |
+| ![SHAP summary](reports/figures/05_shap_summary.png) | ![SHAP waterfall](reports/figures/05_shap_waterfall.png) |
 | ![Inventory trade-off](reports/figures/06_inventory_tradeoff.png) | ![Inventory example](reports/figures/06_inventory_example.png) |
 
-## Limitations
+## Inventory simulation
 
-- **⚠️ The inventory part is a simulation.** There is no real inventory data. Recorded sales are used as demand, but **sales are censored demand**: on stockout days the true demand was higher and cannot be seen. Real fill rates would likely be lower than the simulated ones.
-- **The simulation is simplified.** It has no minimum order quantities, pack sizes, shelf life, shelf capacity or supplier delays, and the lead time is fixed. The z value targets a cycle service level, not the fill rate, which is why measured fill rates are above the target. Safety stock is calibrated on a short window (45 days).
-- **Promotions are assumed to be known in advance**, as in the Kaggle test set. In reality, promotion plans can change late.
-- **The payday feature comes from the Kaggle data notes** (public-sector wages are paid on the 15th and the last day of the month). It is not verified against any other source.
-- **Limited scope:** the 10 largest families from 2015-07 onward. Sparse, intermittent families (e.g. BOOKS, BABY CARE) would need other methods, such as Croston or a Tweedie loss.
-- **Fixed hyperparameters, no tuning.** Tuning would need a separate validation period so that the test folds are not overfit.
-- **Recursive errors build up over the horizon:** WAPE is about 0.10 on day 1 and about 0.12–0.14 at the end. Holiday effects can be over-forecast for some stores (see store 44 around Aug 11, 2017).
-- **Oil price adds almost nothing at this daily horizon.**
-- **The backtest covers only June–August 2017.** It does not test Christmas or other high seasons.
+There is no real stock data, so this is a simulation that uses recorded sales as demand. It covers the 64 backtest days (2017-06-13 to 2017-08-15) and all 540 series.
 
-## How to run (Windows, CPU)
+- Policy: every evening, order up to the 4-day forecast plus safety stock.
+- Lead time is 3 days. Demand that cannot be served is lost.
+- Safety stock = z × RMSE of the 4-day forecast error, measured per series in a calibration period (cutoffs 2017-04-25 to 2017-06-08).
+- 4-day forecast WAPE in the simulation: 0.071 (LightGBM), 0.122 (seasonal naive), 0.255 (naive).
+
+| Service level | Method | Fill rate | Avg. inventory (units) | Avg. inventory (days of demand) |
+|---|---|---|---|---|
+| 90% | Naive | 98.98% | 1,851,953 | 2.36 |
+| 90% | Seasonal naive | 98.81% | 794,656 | 1.01 |
+| 90% | LightGBM | 99.05% | 511,513 | **0.65** |
+| 95% | Naive | 99.59% | 2,250,025 | 2.86 |
+| 95% | Seasonal naive | 99.30% | 980,054 | 1.25 |
+| 95% | LightGBM | 99.32% | 634,526 | **0.81** |
+| 99% | Naive | 99.89% | 3,032,940 | 3.86 |
+| 99% | Seasonal naive | 99.68% | 1,344,449 | 1.71 |
+| 99% | LightGBM | 99.58% | 872,260 | **1.11** |
+
+At the same service level naive has a higher fill rate, because its larger errors give it more safety stock (total σ 3.2 times that of LightGBM). A fair comparison is the inventory needed for the same fill rate. For a 99.5% fill rate, naive needs 2.79 days of demand, seasonal naive 1.43 days and LightGBM 1.00 day. That is 64% and 30% less inventory with LightGBM.
+
+## Assumptions and limits
+
+- Promotions are assumed to be known in advance, as in the Kaggle test set. In practice, promotion plans can change late.
+- The payday rule (15th and last day of the month) comes from the Kaggle data description. It is not checked against another source.
+- Sales are censored demand: on stockout days the real demand was higher and cannot be seen. Real fill rates would likely be lower than the simulated ones.
+- The simulation has no minimum order sizes, pack sizes, shelf life, shelf capacity or supplier delays, and the lead time is fixed.
+- Only the 10 largest families are used. Sparse families such as BOOKS or BABY CARE would need other methods.
+- The backtest covers June to August 2017 only, so Christmas and other peak seasons are not tested.
+- Parameters are fixed. Tuning would need a separate validation period.
+
+## How to run
+
+Windows, CPU only, tested with Python 3.10.
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-# download the Kaggle CSVs into data\
+# put the Kaggle CSV files in data\
+python tests\test_features.py
 jupyter nbconvert --to notebook --execute --inplace notebooks\forecasting.ipynb
 ```
 
-Or open `notebooks/forecasting.ipynb` in Jupyter and run all cells. The full run takes about 7 minutes; about 3 of them are the daily re-forecasts in the inventory step. Tested with Python 3.10.
+You can also open `notebooks/forecasting.ipynb` in Jupyter and run all cells. The run takes a few minutes; the inventory step takes about 3 minutes. The notebook writes the tables and figures to `reports/`.
 
 ## Project structure
 
 ```
 src/
-  data.py        load CSVs, choose scope
-  features.py    leakage-safe features (lags, calendar, holidays, payday, oil)
+  data.py        load CSV files, choose scope
+  features.py    features (lags, calendar, payday, holidays, oil)
   baselines.py   naive and seasonal naive
-  model.py       LightGBM training + recursive forecast
+  model.py       LightGBM training and recursive forecast
   evaluate.py    folds and metrics (MAE, RMSE, WAPE)
-  backtest.py    rolling-window backtest
+  backtest.py    rolling-origin backtest
   explain.py     SHAP
-  inventory.py   order-up-to simulation
-notebooks/forecasting.ipynb   all steps with results (EN + TR notes)
-reports/                      metrics CSVs and figures
+  inventory.py   inventory simulation
+tests/           payday feature test
+notebooks/forecasting.ipynb   all steps with results
+reports/         metric tables and figures
 ```

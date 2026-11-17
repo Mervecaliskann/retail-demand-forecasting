@@ -29,10 +29,8 @@ def load_stores(data_dir: Path = DATA_DIR) -> pd.DataFrame:
 
 
 def load_oil(data_dir: Path = DATA_DIR) -> pd.DataFrame:
-    # Oil has gaps (weekends, missing days): reindex daily and forward-fill.
-    # Petrol verisinde boşluklar var (hafta sonu, eksik günler): günlük yap ve ileri doldur.
-    # Forward-fill only uses past values, so no leakage.
-    # İleri doldurma sadece geçmiş değeri kullanır, sızıntı yok.
+    # Oil has gaps (weekends, missing days): daily calendar + forward-fill (past values only)
+    # Petrolde boşluklar var (hafta sonu, eksik günler): günlük takvim + ileri doldurma (sadece geçmiş)
     oil = pd.read_csv(data_dir / "oil.csv", parse_dates=["date"])
     full = pd.date_range(oil["date"].min(), "2017-08-31", freq="D")
     oil = oil.set_index("date").reindex(full).rename_axis("date")
@@ -48,8 +46,8 @@ def load_transactions(data_dir: Path = DATA_DIR) -> pd.DataFrame:
     return pd.read_csv(data_dir / "transactions.csv", parse_dates=["date"])
 
 
-# Project scope: small enough for a laptop, big enough to be realistic
-# Proje kapsamı: laptopta hızlı çalışacak kadar küçük, gerçekçi olacak kadar büyük
+# Project scope: runs fast on a laptop
+# Proje kapsamı: laptopta hızlı çalışır
 SCOPE_START = "2015-07-01"
 N_FAMILIES = 10
 

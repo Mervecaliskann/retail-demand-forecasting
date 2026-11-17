@@ -1,15 +1,5 @@
-"""Inventory simulation: order-up-to policy driven by forecasts.
-Stok simülasyonu: tahminlerle çalışan order-up-to (hedef seviyeye tamamlama) politikası.
-
-THIS IS A SIMULATION. There is no real inventory data; demand = recorded sales.
-BU BİR SİMÜLASYONDUR. Gerçek stok verisi yok; talep = kayıtlı satışlar.
-
-Timing (one day) / Zamanlama (bir gün):
-  1. morning: orders arrive          / sabah: siparişler gelir
-  2. day: sell min(stock, demand), unmet demand is lost / gün: min(stok, talep) satılır, karşılanamayan talep kaybolur
-  3. evening: review and order       / akşam: gözden geçir ve sipariş ver
-An order placed on the evening of day t can be sold from day t + L + 1.
-t günü akşamı verilen sipariş t + L + 1 gününden itibaren satılabilir.
+"""Inventory simulation with an order-up-to policy. No real stock data: demand = recorded sales.
+Order-up-to politikasıyla stok simülasyonu. Gerçek stok verisi yok: talep = kayıtlı satış.
 """
 import time
 
@@ -26,13 +16,8 @@ PROTECTION = LEAD_TIME + REVIEW  # days each order must cover / her siparişin k
 
 
 def daily_forecasts(df, feat, cutoffs, retrain_cutoffs, horizon=PROTECTION, verbose=True):
-    """For every daily cutoff, forecast the next `horizon` days with each method.
-    Her günlük cutoff için, her yöntemle sonraki `horizon` günü tahmin et.
-
-    LightGBM uses the latest model trained at a retrain cutoff <= the daily cutoff.
-    LightGBM, günlük cutoff'tan önceki veya aynı gündeki en son eğitilmiş modeli kullanır.
-    Returns columns: cutoff, store_nbr, family, method, fc_sum (sum over the horizon).
-    Döndürülen sütunlar: cutoff, store_nbr, family, method, fc_sum (ufuk boyunca toplam).
+    """Forecast sum of the next `horizon` days (fc_sum) per daily cutoff and method.
+    Her günlük cutoff ve yöntem için sonraki `horizon` günün tahmin toplamı (fc_sum).
     """
     retrain_cutoffs = sorted(pd.to_datetime(retrain_cutoffs))
     sales = df.pivot_table(index="date", columns=KEYS, values="sales", observed=True)
@@ -74,10 +59,8 @@ def protection_actuals(df, cutoffs, horizon=PROTECTION):
 
 
 def error_sigma(fc, actual):
-    """RMSE of the protection-period forecast error, per series and method.
-    Koruma dönemi tahmin hatasının RMSE'si, seri ve yöntem başına.
-    RMSE (not std) so a biased forecast also gets more safety stock.
-    Std değil RMSE: sistematik sapması olan tahmin de daha fazla emniyet stoğu alır.
+    """RMSE of the 4-day forecast error per series and method (RMSE, so bias also counts).
+    Seri ve yöntem başına 4 günlük tahmin hatasının RMSE'si (RMSE, sapma da sayılsın diye).
     """
     m = fc.merge(actual, on=["cutoff"] + KEYS)
     m["e2"] = (m["fc_sum"] - m["actual_sum"]) ** 2
@@ -85,21 +68,13 @@ def error_sigma(fc, actual):
 
 
 def simulate(demand: np.ndarray, fc_sum: np.ndarray, safety: np.ndarray, lead_time: int = LEAD_TIME):
-    """Order-up-to simulation with lost sales, vectorised over series.
-    Kayıp satışlı order-up-to simülasyonu, seriler üzerinde vektörel.
-
-    demand: (n_series, T) daily demand / günlük talep
-    fc_sum: (n_series, T) forecast of the next PROTECTION days, made on the evening
-            before each sim day (column 0 = evening before day 0)
-            her simülasyon gününden önceki akşam yapılan sonraki PROTECTION gün tahmini
-    safety: (n_series,) safety stock / emniyet stoğu
+    """Order-up-to with lost sales. Each day: orders arrive, sell, order in the evening (arrives day t + L + 1).
+    Kayıp satışlı order-up-to. Her gün: sipariş gelir, satış, akşam sipariş (t + L + 1. gün gelir).
     """
     n, T = demand.shape
     target = fc_sum + safety[:, None]  # order-up-to level / hedef seviye
-    # Steady-state start: 1 day of forecast + safety on hand, the other L days already on order.
-    # Inventory position = target, the same rule for every method.
-    # Durağan başlangıç: elde 1 günlük tahmin + emniyet, kalan L gün zaten yolda.
-    # Envanter pozisyonu = hedef, her yöntem için aynı kural.
+    # Start: 1 day of forecast + safety on hand, the other L days on order (same for all methods)
+    # Başlangıç: elde 1 günlük tahmin + emniyet, kalan L gün yolda (tüm yöntemler için aynı)
     daily = fc_sum[:, 0] / (lead_time + 1)
     on_hand = daily + safety
     arrivals = np.zeros((n, T + lead_time + 2))
@@ -132,8 +107,8 @@ def summarize(demand, sold, inv_end) -> dict:
 
 
 def simulate_method(df, fc_sim, sigma, sim_days, method: str, service_level: float):
-    """Simulate one method; returns demand table (series x day), sold and end-of-day stock.
-    Tek bir yöntemi simüle et; talep tablosu (seri x gün), satılan ve gün sonu stok döner.
+    """Simulate one method; returns demand (series x day), sold and end-of-day stock.
+    Tek yöntemi simüle et; talep (seri x gün), satılan ve gün sonu stok döner.
     """
     d = df[df["date"].isin(sim_days)].copy()
     d["family"] = d["family"].astype(str)
